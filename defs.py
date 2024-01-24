@@ -12,7 +12,7 @@ import matplotlib.path as mpath
 import matplotlib.colors as colors
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
-from statsmodels.tsa.arima_model import ARMA
+# from statsmodels.tsa.arima_model import ARMA
 from statsmodels.tsa.arima_process import ArmaProcess
 
 import eofs
@@ -451,7 +451,9 @@ def change_lons(ds):
 
 def contourlines(data, ax):
 
-    c1 = data.plot.contour(ax=ax, transform = ccrs.PlateCarree(), levels = [-2,-1,0,1,2], colors = ['w', 'w', 'k', 'w', 'w'], linestyles = ['-.', '-.', '-.', '--', '--'], linewidths = 1)
+    lcolor = 'lightgrey'
+#     c1 = data.plot.contour(ax=ax, transform = ccrs.PlateCarree(), levels = [-2,-1,0,1,2], colors = ['w','k','k','k','w'], linestyles = ['-.', '-.', '-', '--', '--'], linewidths = [1.5,1.5,2,1.5,1.5])
+    c1 = data.plot.contour(ax=ax, transform = ccrs.PlateCarree(), levels = [-2,-1,0,1,2], colors = ['w','k','k','k','w'], linestyles = ['--', '--', '-', '-', '-'], linewidths = [1.5,1.5,2,1.5,1.5])
     c2 = ax.clabel(c1, c1.levels, fontsize=12, inline=True, fmt = '%1.0f')
     
     return c1, c2
@@ -465,6 +467,14 @@ def lat_ticks(ax, mode='NH'):
     if mode == 'NH2':
         c1 = ax.set_yticks([0, 15, 30, 45, 60, 75], crs=ccrs.PlateCarree()); 
         c2 = ax.set_yticklabels([0, 15, 30, 45, 60, 75], fontsize=11);
+        
+    if mode == 'NH3':
+        c1 = ax.set_yticks([-15, 0, 15, 30, 45, 60, 75], crs=ccrs.PlateCarree()); 
+        c2 = ax.set_yticklabels([-15, 0, 15, 30, 45, 60, 75], fontsize=11);
+        
+    if mode == 'NH4':
+        c1 = ax.set_yticks([0, 30, 60], crs=ccrs.PlateCarree()); 
+        c2 = ax.set_yticklabels([0, 30, 60], fontsize=11);
     
     if mode == 'global':
         c1 = ax.set_yticks([-60, -30, 0, 30, 60], crs=ccrs.PlateCarree()); 
@@ -487,11 +497,33 @@ def lon_ticks(ax, direction = 'top', lons = [0, 60,120,180, -120,-60]):
     
     return c1, c2, c3, c4, c5
 
+def cyclic_array(data):
+    
+    data_, lon_ = cyclic(data, coord=data.lon);
+    array = xr.DataArray(data_, coords = dict(lon = ("lon", lon_), lat = ("lat", data.lat)), dims = data.dims)
+    
+    return array
+
+
 def varfs(data):
     
     varfs = np.round(100*data.variance_fractions.values,decimals=1);
 
     return varfs
+
+def styles_width(levels, lwref):
+
+    lw_list = np.where(levels==0., lwref+0.5, lwref);
+
+    lines = list();
+
+    for i in range(len(levels)): 
+
+        if levels[i]<0: lines.append('--')
+        elif levels[i]>=0: lines.append('-')
+#         elif levels[i]>0: lines.append('-')
+        
+    return lines, lw_list
 
 def compute_SLP_eofs(data, gridweights, nmodes = 3, lats = [20, 85], sector = 'NH', sim = 'PI', lowess_filter = False, rmlen = 30):
     
@@ -537,6 +569,33 @@ def compute_SLP_eofs(data, gridweights, nmodes = 3, lats = [20, 85], sector = 'N
     sd = NH_.std("time")
     
     return eofs, sd
+
+def variance_bootstrap(data, gridweights, nmodes = 2, lats = [20,85], sector = 'NH', sim = 'PI', nseg = 100, nboot = 250, reanalysis = False):
+
+    # variance bootstrapping
+    # nseg = size of subsegment in data
+    # nboot = number times a random selection will be done
+    
+    nlen = len(data["time"]); 
+    varfs = np.empty((nboot, nmodes))
+
+    for i in range(nboot):
+
+        data_boot = data[np.random.choice(nlen, size = nseg, replace = False)]
+        if reanalysis == True:
+            eofs = EOF_analysis(data_boot, weights = gridweights, n = nmodes, scale_eofs=True)
+        else:
+            eofs, _ = compute_SLP_eofs(data_boot, gridweights=gridweights, nmodes = nmodes, lats = lats, sector = sector, sim = sim, lowess_filter = False)
+        varfs[i,:] = eofs.variance_fractions
+
+    #5% confidence intervals:
+    N = 0.05;
+    iN = int(np.ceil(N*nboot))
+
+    ci_05 = np.sort(varfs,0)[iN]
+    ci_95 = np.sort(varfs,0)[-iN]
+
+    return ci_05, ci_95
 
 def eofs_to_nc(ds, descr, simulation, sector, folder, filename):
 
